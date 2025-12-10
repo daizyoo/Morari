@@ -9,6 +9,13 @@ const config = {
   channelSecret: process.env.CHANNEL_SECRET || '',
 };
 
+if (!config.channelAccessToken || !config.channelSecret) {
+  console.error("LINE tokens are missing in environment variables!");
+  // Vercelログでこのエラーが出たら、環境変数の設定が失敗していることが確定します
+  throw new Error("Missing required LINE API tokens.");
+}
+// 【ここ
+
 // LINE Clientの初期化
 const client = new Client(config);
 
