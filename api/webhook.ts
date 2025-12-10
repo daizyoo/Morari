@@ -1,6 +1,7 @@
 // api/webhook.ts
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { Client, WebhookEvent, MessageAPIResponseBase } from '@line/bot-sdk';
+import { GoogleGenerativeAI } from '@google/generative-ai'; // 追加
 
 // 環境変数から設定を読み込み
 const config = {
@@ -11,25 +12,23 @@ const config = {
 // LINE Clientの初期化
 const client = new Client(config);
 
+// Gemini Clientの初期化（APIキーがない場合はエラー回避のためダミーを入れるかチェックする）
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
+// 応答速度重視で "gemini-1.5-flash" を使用
+const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  // GETリクエスト（ブラウザ確認用）は200を返す
   if (req.method === 'GET') {
-    return res.status(200).send('LINE Bot is running!');
+    return res.status(200).send('LINE Bot (Gemini) is running!');
   }
 
-  // POST以外は拒否
   if (req.method !== 'POST') {
     return res.status(405).end();
   }
 
   try {
-    // 署名検証は本来行うべきですが、Vercelの関数ではreq.bodyがパース済みのため
-    // 初心者向けに一旦省略し、イベント処理に集中します。
-    // 本番運用の際は rawBody を取得して validateSignature を行う必要があります。
-
     const events: WebhookEvent[] = req.body.events;
 
-    // イベントを並列処理
     const results = await Promise.all(
       events.map(async (event: WebhookEvent) => {
         return handleEvent(event);
@@ -39,24 +38,42 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(200).json({ status: 'success', results });
 
   } catch (error) {
-    console.error(error);
+    console.error('Error:', error);
     return res.status(500).json({ status: 'error' });
   }
 }
 
-// イベントハンドラー
+// Geminiを使って返信するロジック
 async function handleEvent(event: WebhookEvent): Promise<MessageAPIResponseBase | undefined> {
   // テキストメッセージ以外は無視
   if (event.type !== 'message' || event.message.type !== 'text') {
     return Promise.resolve(undefined);
   }
 
-  // ユーザーが送ったテキスト
   const userText = event.message.text;
 
-  // オウム返しをする
-  return client.replyMessage(event.replyToken, {
-    type: 'text',
-    text: `あなたは「${userText}」と言いましたね！`,
-  });
+  try {
+    // 1. Geminiに質問を投げる
+    // ユーザーからの入力をそのままプロンプトとして渡す
+    const result = await model.generateContent(userText);
+    const response = await result.response;
+
+    // Geminiからの回答テキストを取得
+    // 空の場合のガード処理も入れる
+    const aiText = response.text() || 'すみません、うまく答えられませんでした。';
+
+    // 2. LINEで返信する
+    return client.replyMessage(event.replyToken, {
+      type: 'text',
+      text: aiText,
+    });
+
+  } catch (error) {
+    console.error('Gemini Error:', error);
+    // エラー時はユーザーに通知
+    return client.replyMessage(event.replyToken, {
+      type: 'text',
+      text: '現在AIが応答できません。少し時間を置いて試してください。',
+    });
+  }
 }
