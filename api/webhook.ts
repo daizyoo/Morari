@@ -62,6 +62,8 @@ async function handleEvent(event: WebhookEvent): Promise<MessageAPIResponseBase 
     // 空の場合のガード処理も入れる
     const aiText = response.text() || 'すみません、うまく答えられませんでした。';
 
+    console.log('ai text: ', aiText)
+
     // 2. LINEで返信する
     return client.replyMessage(event.replyToken, {
       type: 'text',
