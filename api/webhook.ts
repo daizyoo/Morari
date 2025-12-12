@@ -1,7 +1,7 @@
 // api/webhook.ts
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { Client, WebhookEvent, MessageAPIResponseBase } from '@line/bot-sdk';
-import { GoogleGenerativeAI } from '@google/generative-ai'; // 追加
+import { GoogleGenAI } from '@google/genai'; // 追加
 
 const systemPrompt = `
 ## 命令書
@@ -36,17 +36,27 @@ if (!config.channelAccessToken || !config.channelSecret) {
   // Vercelログでこのエラーが出たら、環境変数の設定が失敗していることが確定します
   throw new Error("Missing required LINE API tokens.");
 }
-// 【ここ
 
 // LINE Clientの初期化
 const client = new Client(config);
 
-// Gemini Clientの初期化（APIキーがない場合はエラー回避のためダミーを入れるかチェックする）
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
-// 応答速度重視で "gemini-1.5-flash" を使用
-const model = genAI.getGenerativeModel({
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+
+if (!GEMINI_API_KEY) {
+  console.error("Gemini API key is missing in environment variables!");
+
+  throw new Error("Missing required Gemini API key.")
+}
+
+// Gemini Clientの初期化
+const genAI = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
+
+// "gemini-2.5-flash"以降は使用できない
+const chats = genAI.chats.create({
   model: process.env.GEMINI_MODEL || 'gemini-2.5-flash',
-  systemInstruction: systemPrompt, // ここでプロンプトを指定
+  config: {
+    systemInstruction: systemPrompt, // ここでプロンプトを指定
+  },
 });
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -87,12 +97,14 @@ async function handleEvent(event: WebhookEvent): Promise<MessageAPIResponseBase 
   try {
     // 1. Geminiに質問を投げる
     // ユーザーからの入力をそのままプロンプトとして渡す
-    const result = await model.generateContent(userText);
-    const response = await result.response;
+    const result = chats.sendMessage({
+      message: userText,
+    });
+    const response = (await result).text;
 
     // Geminiからの回答テキストを取得
     // 空の場合のガード処理も入れる
-    const aiText = response.text() || 'すみません、うまく答えられませんでした。';
+    const aiText = response || 'すみません、うまく答えられませんでした。';
 
     console.log('ai text: ', aiText)
 
